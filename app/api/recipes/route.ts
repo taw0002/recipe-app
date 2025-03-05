@@ -7,7 +7,7 @@ import { NextResponse } from 'next/server';
 import { v4 as uuidv4 } from 'uuid';
 import db from '@/db';
 import * as schema from '@/db/schema';
-import { eq } from 'drizzle-orm';
+import { eq, asc } from 'drizzle-orm';
 import { cookies } from 'next/headers';
 
 // Define types for our relational data to fix TypeScript errors
@@ -34,52 +34,69 @@ type RecipeWithRelations = {
  */
 export async function GET() {
   try {
-    // Fetch all recipes from the database
-    const dbRecipes = await db.query.recipes.findMany({
-      with: {
-        ingredients: {
-          orderBy: (ingredients: any, { asc }: any) => [asc(ingredients.order)],
-        },
-        steps: {
-          orderBy: (steps: any, { asc }: any) => [asc(steps.order)],
-        },
-        tags: {
-          with: {
-            tag: true,
-          },
-        },
-        cookLogs: true,
-      },
-    }) as RecipeWithRelations[];
-
-    // Transform the data to match the expected frontend format
-    const recipes = dbRecipes.map(recipe => {
-      // Calculate average rating
-      const totalRating = recipe.cookLogs.reduce((sum: number, log: CookLog) => sum + log.rating, 0);
-      const averageRating = recipe.cookLogs.length > 0 
-        ? totalRating / recipe.cookLogs.length 
-        : 0;
-
-      return {
-        id: recipe.id,
-        name: recipe.name,
-        description: recipe.description,
-        image: recipe.image,
-        cookingTime: recipe.cookingTime,
-        ingredients: recipe.ingredients.map(i => i.text),
-        steps: recipe.steps.map(s => s.text),
-        tags: recipe.tags.map(t => t.tag.name),
-        cookLogs: recipe.cookLogs.map(log => ({
-          date: log.date,
-          rating: log.rating,
-          notes: log.notes || "",
-        })),
-        averageRating: averageRating,
-      };
-    });
+    // First, fetch all recipes (without relations to avoid the error)
+    const dbRecipes = await db.select().from(schema.recipes);
+    
+    // For each recipe, fetch its related data separately
+    const recipesWithRelations = await Promise.all(
+      dbRecipes.map(async (recipe) => {
+        // Fetch ingredients
+        const ingredients = await db
+          .select()
+          .from(schema.ingredients)
+          .where(eq(schema.ingredients.recipeId, recipe.id))
+          .orderBy(asc(schema.ingredients.order));
+          
+        // Fetch steps
+        const steps = await db
+          .select()
+          .from(schema.steps)
+          .where(eq(schema.steps.recipeId, recipe.id))
+          .orderBy(asc(schema.steps.order));
+          
+        // Fetch tags via recipeTags
+        const recipeTags = await db
+          .select({
+            recipeId: schema.recipeTags.recipeId,
+            tagId: schema.recipeTags.tagId,
+            tagName: schema.tags.name
+          })
+          .from(schema.recipeTags)
+          .innerJoin(schema.tags, eq(schema.recipeTags.tagId, schema.tags.id))
+          .where(eq(schema.recipeTags.recipeId, recipe.id));
+          
+        // Fetch cook logs
+        const cookLogs = await db
+          .select()
+          .from(schema.cookLogs)
+          .where(eq(schema.cookLogs.recipeId, recipe.id));
+          
+        // Calculate average rating
+        const totalRating = cookLogs.reduce((sum, log) => sum + log.rating, 0);
+        const averageRating = cookLogs.length > 0 ? totalRating / cookLogs.length : 0;
+          
+        // Return the recipe with all its relations
+        return {
+          id: recipe.id,
+          name: recipe.name,
+          description: recipe.description,
+          image: recipe.image,
+          cookingTime: recipe.cookingTime,
+          ingredients: ingredients.map(i => i.text),
+          steps: steps.map(s => s.text),
+          tags: recipeTags.map(t => t.tagName),
+          cookLogs: cookLogs.map(log => ({
+            date: log.date,
+            rating: log.rating,
+            notes: log.notes || "",
+          })),
+          averageRating: averageRating,
+        };
+      })
+    );
 
     // Return the transformed recipes
-    return NextResponse.json(recipes);
+    return NextResponse.json(recipesWithRelations);
   } catch (error) {
     console.error('Error fetching recipes:', error);
     return NextResponse.json(

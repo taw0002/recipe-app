@@ -6,7 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import db from '@/db';
 import * as schema from '@/db/schema';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, asc } from 'drizzle-orm';
 
 // Define types for our relational data to fix TypeScript errors
 type Ingredient = { text: string; order: number };
@@ -37,24 +37,10 @@ export async function GET(
   try {
     const { id } = params;
 
-    // Fetch the recipe from the database with related data
+    // Fetch the recipe from the database
     const recipe = await db.query.recipes.findFirst({
-      where: eq(schema.recipes.id, id),
-      with: {
-        ingredients: {
-          orderBy: (ingredients: any, { asc }: any) => [asc(ingredients.order)],
-        },
-        steps: {
-          orderBy: (steps: any, { asc }: any) => [asc(steps.order)],
-        },
-        tags: {
-          with: {
-            tag: true,
-          },
-        },
-        cookLogs: true,
-      },
-    }) as RecipeWithRelations | null;
+      where: eq(schema.recipes.id, id)
+    });
 
     // Return 404 if recipe not found
     if (!recipe) {
@@ -64,6 +50,40 @@ export async function GET(
       );
     }
 
+    // Fetch related data separately
+    const [ingredients, steps, tagRelations, cookLogs] = await Promise.all([
+      // Get ingredients ordered by their order field
+      db.select()
+        .from(schema.ingredients)
+        .where(eq(schema.ingredients.recipeId, id))
+        .orderBy(asc(schema.ingredients.order)),
+      
+      // Get steps ordered by their order field
+      db.select()
+        .from(schema.steps)
+        .where(eq(schema.steps.recipeId, id))
+        .orderBy(asc(schema.steps.order)),
+      
+      // Get tag relations with the tag data
+      db.select({
+        tagId: schema.recipeTags.tagId,
+        tag: schema.tags
+      })
+        .from(schema.recipeTags)
+        .where(eq(schema.recipeTags.recipeId, id))
+        .innerJoin(schema.tags, eq(schema.recipeTags.tagId, schema.tags.id)),
+      
+      // Get cook logs
+      db.select()
+        .from(schema.cookLogs)
+        .where(eq(schema.cookLogs.recipeId, id))
+    ]);
+
+    // Calculate average rating
+    const averageRating = cookLogs.length > 0
+      ? cookLogs.reduce((sum, log) => sum + log.rating, 0) / cookLogs.length
+      : 0;
+
     // Transform the data to match the expected frontend format
     const formattedRecipe = {
       id: recipe.id,
@@ -71,17 +91,15 @@ export async function GET(
       description: recipe.description,
       image: recipe.image,
       cookingTime: recipe.cookingTime,
-      ingredients: recipe.ingredients.map((i: Ingredient) => i.text),
-      steps: recipe.steps.map((s: Step) => s.text),
-      tags: recipe.tags.map((t: TagRelation) => t.tag.name),
-      cookLogs: recipe.cookLogs.map((log: CookLog) => ({
+      ingredients: ingredients.map(i => i.text),
+      steps: steps.map(s => s.text),
+      tags: tagRelations.map(t => t.tag.name),
+      cookLogs: cookLogs.map(log => ({
         date: log.date,
         rating: log.rating,
         notes: log.notes || "",
       })),
-      averageRating: recipe.cookLogs.length > 0
-        ? recipe.cookLogs.reduce((sum: number, log: CookLog) => sum + log.rating, 0) / recipe.cookLogs.length
-        : 0,
+      averageRating
     };
 
     // Return the recipe

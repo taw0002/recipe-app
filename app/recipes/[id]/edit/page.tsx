@@ -8,9 +8,22 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Label } from "@/components/ui/label"
-import { Plus, X } from "lucide-react"
-import { recipes } from "@/lib/data"
+import { Plus, X, ArrowLeft, Sparkles } from "lucide-react"
+import { toast } from "sonner"
+import { AIImageGenerator } from "@/components/ai-image-generator"
+import Image from "next/image"
+import { DescriptionGeneratorModal } from "@/components/description-generator-modal"
 
+// Define standard image dimensions
+const IMAGE_HEIGHT = 300 // px
+const IMAGE_WIDTH = 300 // px
+const IMAGE_ASPECT_RATIO = "1/1" // Square aspect ratio
+const DEFAULT_IMAGE = "/placeholder.svg"
+
+/**
+ * EditRecipe Component
+ * Allows users to edit an existing recipe
+ */
 export default function EditRecipe() {
   const router = useRouter()
   const params = useParams()
@@ -22,19 +35,43 @@ export default function EditRecipe() {
   const [steps, setSteps] = useState<string[]>([""])
   const [tag, setTag] = useState("")
   const [tags, setTags] = useState<string[]>([])
+  const [loading, setLoading] = useState(true)
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [isDescriptionModalOpen, setIsDescriptionModalOpen] = useState(false)
 
   useEffect(() => {
-    const recipe = recipes.find((r) => r.id === params.id)
-    if (recipe) {
-      setName(recipe.name)
-      setDescription(recipe.description)
-      setImage(recipe.image)
-      setCookingTime(recipe.cookingTime.toString())
-      setIngredients(recipe.ingredients.length ? recipe.ingredients : [""])
-      setSteps(recipe.steps.length ? recipe.steps : [""])
-      setTags(recipe.tags)
-    } else {
-      router.push("/")
+    const fetchRecipe = async () => {
+      try {
+        setLoading(true)
+        setError(null)
+        
+        const response = await fetch(`/api/recipes/${params.id}`)
+        
+        if (!response.ok) {
+          throw new Error(`Error ${response.status}: ${response.statusText}`)
+        }
+        
+        const recipe = await response.json()
+        
+        setName(recipe.name)
+        setDescription(recipe.description)
+        setImage(recipe.image)
+        setCookingTime(recipe.cookingTime.toString())
+        setIngredients(recipe.ingredients.length ? recipe.ingredients : [""])
+        setSteps(recipe.steps.length ? recipe.steps : [""])
+        setTags(recipe.tags)
+      } catch (err: any) {
+        console.error('Failed to fetch recipe:', err)
+        setError(`Failed to load recipe: ${err.message}`)
+        toast.error(`Failed to load recipe: ${err.message}`)
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    if (params.id) {
+      fetchRecipe()
     }
   }, [params.id, router])
 
@@ -85,26 +122,90 @@ export default function EditRecipe() {
     setTags(tags.filter((t) => t !== tagToRemove))
   }
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleImageGenerated = (imageUrl: string) => {
+    setImage(imageUrl)
+  }
+
+  const handleDescriptionGenerated = (generatedDescription: string) => {
+    setDescription(generatedDescription)
+  }
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    setIsSubmitting(true)
 
-    // Filter out empty ingredients and steps
-    const filteredIngredients = ingredients.filter((i) => i.trim() !== "")
-    const filteredSteps = steps.filter((s) => s.trim() !== "")
+    try {
+      // Filter out empty ingredients and steps
+      const filteredIngredients = ingredients.filter((i) => i.trim() !== "")
+      const filteredSteps = steps.filter((s) => s.trim() !== "")
 
-    // In a real app, this would call an API to save the data
-    const recipe = recipes.find((r) => r.id === params.id)
-    if (recipe) {
-      recipe.name = name
-      recipe.description = description
-      recipe.image = image
-      recipe.cookingTime = Number.parseInt(cookingTime) || 0
-      recipe.ingredients = filteredIngredients
-      recipe.steps = filteredSteps
-      recipe.tags = tags
+      // Prepare the recipe data
+      const recipeData = {
+        name,
+        description,
+        image,
+        cookingTime: Number.parseInt(cookingTime) || 0,
+        ingredients: filteredIngredients,
+        steps: filteredSteps,
+        tags,
+      }
+
+      // Call the API to update the recipe
+      const response = await fetch(`/api/recipes/${params.id}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(recipeData),
+      })
+
+      if (!response.ok) {
+        const errorData = await response.text()
+        console.error('Error response:', errorData)
+        throw new Error(`Failed to update recipe: ${response.statusText}`)
+      }
+
+      // Show success message
+      toast.success("Recipe updated successfully!")
+
+      // Redirect to the recipe detail page
+      router.push(`/recipes/${params.id}`)
+    } catch (error: any) {
+      console.error('Error updating recipe:', error)
+      toast.error("Failed to update recipe. Please try again.")
+    } finally {
+      setIsSubmitting(false)
     }
+  }
 
-    router.push(`/recipes/${params.id}`)
+  // Loading state
+  if (loading) {
+    return (
+      <div className="container mx-auto px-4 py-8">
+        <div className="h-10 bg-gray-200 rounded-md w-64 animate-pulse mb-8"></div>
+        <div className="space-y-6">
+          {[...Array(5)].map((_, i) => (
+            <div key={i} className="bg-gray-200 h-12 rounded-md animate-pulse"></div>
+          ))}
+        </div>
+      </div>
+    )
+  }
+
+  // Error state
+  if (error) {
+    return (
+      <div className="container mx-auto px-4 py-8 text-center">
+        <h1 className="text-2xl font-bold mb-4">Error</h1>
+        <p className="text-red-500">{error}</p>
+        <Button 
+          className="mt-4" 
+          onClick={() => router.push("/")}
+        >
+          Return to Recipes
+        </Button>
+      </div>
+    )
   }
 
   return (
@@ -131,20 +232,47 @@ export default function EditRecipe() {
             </div>
 
             <div>
-              <Label htmlFor="image">Image URL</Label>
-              <Input id="image" value={image} onChange={(e) => setImage(e.target.value)} />
+              <Label>Recipe Image</Label>
+              <div className="space-y-2">
+                <Input 
+                  id="image" 
+                  value={image} 
+                  onChange={(e) => setImage(e.target.value)} 
+                  placeholder="Enter image URL"
+                />
+                
+                <AIImageGenerator 
+                  recipeName={name}
+                  recipeDescription={description}
+                  onImageGenerated={handleImageGenerated}
+                  currentImage={image}
+                />
+              </div>
             </div>
           </div>
 
           <div>
             <Label htmlFor="description">Description</Label>
-            <Textarea
-              id="description"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              className="h-[calc(100%-1.5rem)]"
-              required
-            />
+            <div className="space-y-2">
+              <Textarea
+                id="description"
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                className="h-32"
+                placeholder="Describe your recipe..."
+              />
+              <Button 
+                type="button" 
+                variant="outline" 
+                size="sm"
+                onClick={() => setIsDescriptionModalOpen(true)}
+                className="w-full"
+                disabled={!name.trim()}
+              >
+                <Sparkles className="h-4 w-4 mr-2" />
+                Generate Description with AI
+              </Button>
+            </div>
           </div>
         </div>
 
@@ -241,9 +369,20 @@ export default function EditRecipe() {
           <Button type="button" variant="outline" onClick={() => router.push(`/recipes/${params.id}`)}>
             Cancel
           </Button>
-          <Button type="submit">Save Changes</Button>
+          <Button type="submit" disabled={isSubmitting}>
+            {isSubmitting ? "Saving..." : "Save Changes"}
+          </Button>
         </div>
       </form>
+
+      {/* Description Generator Modal */}
+      <DescriptionGeneratorModal
+        isOpen={isDescriptionModalOpen}
+        onClose={() => setIsDescriptionModalOpen(false)}
+        recipeName={name}
+        ingredients={ingredients}
+        onDescriptionGenerated={handleDescriptionGenerated}
+      />
     </div>
   )
 }

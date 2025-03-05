@@ -8,19 +8,34 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Label } from "@/components/ui/label"
-import { Plus, X } from "lucide-react"
-import { recipes } from "@/lib/data"
+import { Plus, X, Sparkles } from "lucide-react"
+import { toast } from "sonner"
+import { AIImageGenerator } from "@/components/ai-image-generator"
+import Image from "next/image"
+import { DescriptionGeneratorModal } from "@/components/description-generator-modal"
 
+// Define standard image dimensions
+const IMAGE_HEIGHT = 300 // px
+const IMAGE_WIDTH = 300 // px
+const IMAGE_ASPECT_RATIO = "1/1" // Square aspect ratio
+const DEFAULT_IMAGE = "/placeholder.svg"
+
+/**
+ * NewRecipe Component
+ * Allows users to create a new recipe with all necessary details
+ */
 export default function NewRecipe() {
   const router = useRouter()
   const [name, setName] = useState("")
   const [description, setDescription] = useState("")
-  const [image, setImage] = useState("/placeholder.svg?height=400&width=600")
+  const [image, setImage] = useState(DEFAULT_IMAGE)
   const [cookingTime, setCookingTime] = useState("")
   const [ingredients, setIngredients] = useState<string[]>([""])
   const [steps, setSteps] = useState<string[]>([""])
   const [tag, setTag] = useState("")
   const [tags, setTags] = useState<string[]>([])
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [isDescriptionModalOpen, setIsDescriptionModalOpen] = useState(false)
 
   const handleAddIngredient = () => {
     setIngredients([...ingredients, ""])
@@ -69,29 +84,60 @@ export default function NewRecipe() {
     setTags(tags.filter((t) => t !== tagToRemove))
   }
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleImageGenerated = (imageUrl: string) => {
+    setImage(imageUrl)
+  }
+
+  const handleDescriptionGenerated = (generatedDescription: string) => {
+    setDescription(generatedDescription)
+  }
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    setIsSubmitting(true)
 
-    // Filter out empty ingredients and steps
-    const filteredIngredients = ingredients.filter((i) => i.trim() !== "")
-    const filteredSteps = steps.filter((s) => s.trim() !== "")
+    try {
+      // Filter out empty ingredients and steps
+      const filteredIngredients = ingredients.filter((i) => i.trim() !== "")
+      const filteredSteps = steps.filter((s) => s.trim() !== "")
 
-    // In a real app, this would call an API to save the data
-    const newRecipe = {
-      id: Date.now().toString(),
-      name,
-      description,
-      image,
-      cookingTime: Number.parseInt(cookingTime) || 0,
-      ingredients: filteredIngredients,
-      steps: filteredSteps,
-      tags,
-      cookLogs: [],
-      averageRating: 0,
+      // Prepare the recipe data
+      const recipeData = {
+        name,
+        description,
+        image,
+        cookingTime: Number.parseInt(cookingTime) || 0,
+        ingredients: filteredIngredients,
+        steps: filteredSteps,
+        tags,
+      }
+
+      // Call the API to save the new recipe
+      const response = await fetch('/api/recipes', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(recipeData),
+      })
+
+      if (!response.ok) {
+        throw new Error('Failed to save recipe')
+      }
+
+      const data = await response.json()
+
+      // Show success message
+      toast.success("Your recipe has been saved.")
+      
+      // Navigate to the recipe detail page
+      router.push(`/recipes/${data.id}`)
+    } catch (error) {
+      console.error('Error saving recipe:', error)
+      toast.error("Failed to save your recipe. Please try again.")
+    } finally {
+      setIsSubmitting(false)
     }
-
-    recipes.push(newRecipe)
-    router.push("/")
   }
 
   return (
@@ -118,20 +164,47 @@ export default function NewRecipe() {
             </div>
 
             <div>
-              <Label htmlFor="image">Image URL</Label>
-              <Input id="image" value={image} onChange={(e) => setImage(e.target.value)} />
+              <Label>Recipe Image</Label>
+              <div className="space-y-4">
+                <Input 
+                  id="image" 
+                  value={image} 
+                  onChange={(e) => setImage(e.target.value)} 
+                  placeholder="Enter image URL"
+                />
+                
+                <AIImageGenerator 
+                  recipeName={name}
+                  recipeDescription={description}
+                  onImageGenerated={handleImageGenerated}
+                  currentImage={image}
+                />
+              </div>
             </div>
           </div>
 
           <div>
             <Label htmlFor="description">Description</Label>
-            <Textarea
-              id="description"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              className="h-[calc(100%-1.5rem)]"
-              required
-            />
+            <div className="space-y-2">
+              <Textarea
+                id="description"
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                className="h-32"
+                required
+              />
+              <Button 
+                type="button" 
+                variant="outline" 
+                size="sm"
+                onClick={() => setIsDescriptionModalOpen(true)}
+                className="w-full"
+                disabled={!name.trim()}
+              >
+                <Sparkles className="h-4 w-4 mr-2" />
+                Generate Description with AI
+              </Button>
+            </div>
           </div>
         </div>
 
@@ -228,9 +301,20 @@ export default function NewRecipe() {
           <Button type="button" variant="outline" onClick={() => router.push("/")}>
             Cancel
           </Button>
-          <Button type="submit">Save Recipe</Button>
+          <Button type="submit" disabled={isSubmitting}>
+            {isSubmitting ? "Saving..." : "Save Recipe"}
+          </Button>
         </div>
       </form>
+
+      {/* Description Generator Modal */}
+      <DescriptionGeneratorModal
+        isOpen={isDescriptionModalOpen}
+        onClose={() => setIsDescriptionModalOpen(false)}
+        recipeName={name}
+        ingredients={ingredients}
+        onDescriptionGenerated={handleDescriptionGenerated}
+      />
     </div>
   )
 }

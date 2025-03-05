@@ -6,8 +6,13 @@ import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { Star } from "lucide-react"
-import { recipes } from "@/lib/data"
+import { toast } from "@/components/ui/use-toast"
 
+/**
+ * AddCookLogForm Component
+ * Allows users to submit their experience cooking a recipe by providing
+ * a rating and notes
+ */
 export default function AddCookLogForm({
   recipeId,
   onComplete,
@@ -18,25 +23,48 @@ export default function AddCookLogForm({
   const [rating, setRating] = useState(0)
   const [notes, setNotes] = useState("")
   const [hoveredRating, setHoveredRating] = useState(0)
+  const [isSubmitting, setIsSubmitting] = useState(false)
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    setIsSubmitting(true)
 
-    // In a real app, this would call an API to save the data
-    const recipe = recipes.find((r) => r.id === recipeId)
-    if (recipe) {
-      recipe.cookLogs.push({
-        date: new Date().toISOString(),
-        rating,
-        notes,
+    try {
+      // Call the API to save the cooking log
+      const response = await fetch(`/api/recipes/${recipeId}/cook-logs`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          date: new Date().toISOString(),
+          rating,
+          notes,
+        }),
       })
 
-      // Recalculate average rating
-      const totalRating = recipe.cookLogs.reduce((sum, log) => sum + log.rating, 0)
-      recipe.averageRating = totalRating / recipe.cookLogs.length
-    }
+      if (!response.ok) {
+        throw new Error('Failed to save cooking log')
+      }
 
-    onComplete()
+      // Display success toast
+      toast({
+        title: "Success!",
+        description: "Your cooking experience has been logged.",
+      })
+
+      // Notify parent component that we're done
+      onComplete()
+    } catch (error) {
+      console.error('Error saving cooking log:', error)
+      toast({
+        title: "Error",
+        description: "Failed to save your cooking log. Please try again.",
+        variant: "destructive",
+      })
+    } finally {
+      setIsSubmitting(false)
+    }
   }
 
   return (
@@ -79,11 +107,11 @@ export default function AddCookLogForm({
       </div>
 
       <div className="flex justify-end gap-2">
-        <Button type="button" variant="outline" onClick={onComplete}>
+        <Button type="button" variant="outline" onClick={onComplete} disabled={isSubmitting}>
           Cancel
         </Button>
-        <Button type="submit" disabled={rating === 0}>
-          Save
+        <Button type="submit" disabled={rating === 0 || isSubmitting}>
+          {isSubmitting ? "Saving..." : "Save"}
         </Button>
       </div>
     </form>
